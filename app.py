@@ -6,30 +6,19 @@ import re
 from collections import deque
 from statistics import mean
 
-# ==============================
-# CONFIG
-# ==============================
-
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
 SCAN_INTERVAL = 120
 COMMAND_CHECK_INTERVAL = 5
-ALERT_SCORE_THRESHOLD = 60
 STATS_FILE = "stats.json"
 
 VINTED_COMMISSION_RATE = 0.05
 
-SEARCH_QUERIES = [
-    "nike homme",
-    "adidas homme",
-    "chaussure nike",
-    "chaussure adidas",
-    "booster pokemon scellé",
-    "etb pokemon",
-    "lot carte pokemon",
-    "lots de carte pokemon"
-]
+PRIORITY_ROI_THRESHOLD = 80
+PRIORITY_PROFIT_THRESHOLD = 50
+
+SEARCH_QUERIES = []  # Tu gardes tes 40 recherches côté Vinted
 
 current_index = 0
 seen_items = deque(maxlen=1000)
@@ -49,7 +38,7 @@ def load_stats():
             "total_deals": 0,
             "total_profit_net": 0,
             "total_invested": 0,
-            "best_score": 0
+            "best_roi": 0
         }
 
 def save_stats(stats):
@@ -80,11 +69,11 @@ def send_stats():
     message = f"""
 📊 <b>STATISTIQUES BOT</b>
 
-🔥 Deals totaux: {stats['total_deals']}
+🔥 Deals: {stats['total_deals']}
 💰 Profit net total: {round(stats['total_profit_net'],2)}€
 💸 Capital investi: {round(stats['total_invested'],2)}€
-📈 ROI net moyen: {round(roi,2)}%
-🏆 Meilleur score: {stats['best_score']}
+📈 ROI moyen: {round(roi,2)}%
+🏆 Meilleur ROI: {round(stats['best_roi'],2)}%
 """
     send_message(message)
 
@@ -109,155 +98,101 @@ def check_telegram_commands():
                 send_stats()
 
 # ==============================
-# ANALYSE PRIX
+# ANALYSE MODE
 # ==============================
 
-def clean_average(prices):
-    if len(prices) < 5:
-        return mean(prices)
-    prices_sorted = sorted(prices)
-    cut = int(len(prices_sorted) * 0.2)
-    cleaned = prices_sorted[cut:-cut] if cut > 0 else prices_sorted
-    return round(mean(cleaned), 2)
+def analyze_item(title, price, estimated_value):
 
-def calculate_discount(price, avg_price):
-    if avg_price == 0:
-        return 0
-    return round(((avg_price - price) / avg_price) * 100, 2)
+    commission = estimated_value * VINTED_COMMISSION_RATE
+    net_resale = estimated_value - commission
+    net_profit = net_resale - price
 
-# ==============================
-# MODULE POKÉMON ULTRA
-# ==============================
+    if net_profit <= 0:
+        return None
 
-def analyze_pokemon_lot(title, price):
+    roi = (net_profit / price) * 100
 
-    title_lower = title.lower()
-
-    # Détection nombre de cartes
-    numbers = re.findall(r'\d+', title_lower)
-    estimated_value = 0
-    boost_score = 0
-
-    if numbers:
-        card_count = max([int(n) for n in numbers if int(n) <= 1000], default=0)
-
-        if card_count >= 50:
-            estimated_value = card_count * 0.5  # estimation prudente 0.5€ par carte
-            boost_score += 30
-
-    premium_keywords = [
-        "psa", "gradée", "gold", "ultra",
-        "secrète", "full art", "gx", "ex",
-        "vmax", "vstar", "holo"
-    ]
-
-    if any(word in title_lower for word in premium_keywords):
-        boost_score += 25
-        estimated_value *= 1.5
-
-    if estimated_value > 0:
-        commission = estimated_value * VINTED_COMMISSION_RATE
-        net_resale = estimated_value - commission
-        net_profit = net_resale - price
-
-        if net_profit > 0:
-            roi = (net_profit / price) * 100
-            return {
-                "activated": True,
-                "estimated_value": round(estimated_value,2),
-                "net_profit": round(net_profit,2),
-                "roi": round(roi,2),
-                "boost_score": boost_score
-            }
-
-    return {"activated": False}
+    return {
+        "net_profit": round(net_profit,2),
+        "roi": round(roi,2)
+    }
 
 # ==============================
-# SIMULATION FETCH
+# SIMULATION (À remplacer si besoin)
 # ==============================
 
-def fetch_items(query):
+def simulate_item():
 
-    sample_prices = [
-        80, 85, 78, 82, 79,
-        90, 88, 76, 84, 81,
-        83, 77, 86, 87, 75,
-        120, 30, 95, 92, 89,
-        91, 93, 94, 96, 97
-    ]
+    title = "Lot 200 cartes Pokemon GX ultra rare"
+    price = 60
+    estimated_value = 160
 
-    avg_price = clean_average(sample_prices)
-
-    return [{
-        "id": f"{query}_1",
-        "title": f"Lot 200 cartes Pokemon GX ultra rare",
-        "price": 60,
-        "avg_price": avg_price,
-        "link": "https://www.vinted.fr/item/123456789"
-    }]
+    return title, price, estimated_value, "https://www.vinted.fr/item/123456789"
 
 # ==============================
 # MAIN LOOP
 # ==============================
 
 def main():
-    global current_index, last_scan_time
 
-    send_message("🚀 Bot ULTRA + Module Pokémon activé")
+    send_message("🚀 Bot FUSION MAX + PRIORITÉ activé")
 
     while True:
 
         check_telegram_commands()
 
-        if time.time() - last_scan_time >= SCAN_INTERVAL:
+        title, price, estimated_value, link = simulate_item()
 
-            queries_to_scan = [
-                SEARCH_QUERIES[current_index],
-                SEARCH_QUERIES[(current_index + 1) % len(SEARCH_QUERIES)]
-            ]
+        result = analyze_item(title, price, estimated_value)
 
-            current_index = (current_index + 2) % len(SEARCH_QUERIES)
-            last_scan_time = time.time()
+        if result:
 
-            for query in queries_to_scan:
-                items = fetch_items(query)
+            net_profit = result["net_profit"]
+            roi = result["roi"]
 
-                for item in items:
+            stats["total_deals"] += 1
+            stats["total_profit_net"] += net_profit
+            stats["total_invested"] += price
 
-                    if item["id"] in seen_items:
-                        continue
+            if roi > stats["best_roi"]:
+                stats["best_roi"] = roi
 
-                    seen_items.append(item["id"])
+            save_stats(stats)
 
-                    # MODULE POKÉMON INDÉPENDANT
-                    pokemon_analysis = analyze_pokemon_lot(item["title"], item["price"])
+            # PRIORITÉ CHECK
+            if roi >= PRIORITY_ROI_THRESHOLD or net_profit >= PRIORITY_PROFIT_THRESHOLD:
 
-                    if pokemon_analysis["activated"]:
+                message = f"""
+🚨 <b>DEAL PRIORITÉ - SNIPER IMMÉDIAT</b>
 
-                        stats["total_deals"] += 1
-                        stats["total_profit_net"] += pokemon_analysis["net_profit"]
-                        stats["total_invested"] += item["price"]
+📦 {title}
+💰 Achat: {price}€
+📊 Valeur estimée: {estimated_value}€
 
-                        save_stats(stats)
+💸 Profit net: {net_profit}€
+📈 ROI: {roi}%
 
-                        message = f"""
-🃏 <b>MODULE POKÉMON ULTRA ACTIVÉ</b>
+⚡ ACTION RAPIDE RECOMMANDÉE
 
-📦 {item['title']}
-💰 Achat: {item['price']}€
-📊 Valeur estimée: {pokemon_analysis['estimated_value']}€
-
-💸 Profit net estimé: {pokemon_analysis['net_profit']}€
-📈 ROI: {pokemon_analysis['roi']}%
-
-🔥 Score Pokémon Boosté: +{pokemon_analysis['boost_score']}
-
-🔗 {item['link']}
+🔗 {link}
 """
 
-                        send_message(message)
+            else:
 
-        time.sleep(COMMAND_CHECK_INTERVAL)
+                message = f"""
+🔥 DEAL RENTABLE
+
+📦 {title}
+💰 Achat: {price}€
+💸 Profit net: {net_profit}€
+📈 ROI: {roi}%
+
+🔗 {link}
+"""
+
+            send_message(message)
+
+        time.sleep(120)
 
 if __name__ == "__main__":
     main()
