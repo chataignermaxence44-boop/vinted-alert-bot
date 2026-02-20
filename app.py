@@ -136,13 +136,12 @@ def main():
     send_telegram("🚀 Bot PRO++ analyse avancée activée")
 
     while True:
-       queries_to_scan = [
+        queries_to_scan = [
             SEARCH_QUERIES[current_index],
-            SEARCH_QUERIES[(current_index + 1) % len(SEARCH_QUERIES)],
-            SEARCH_QUERIES[(current_index + 2) % len(SEARCH_QUERIES)]
-]
+            SEARCH_QUERIES[(current_index + 1) % len(SEARCH_QUERIES)]
+        ]
 
-current_index = (current_index + 3) % len(SEARCH_QUERIES)
+        current_index = (current_index + 2) % len(SEARCH_QUERIES)
 
         for query in queries_to_scan:
             items = fetch_items(query)
@@ -177,4 +176,3 @@ current_index = (current_index + 3) % len(SEARCH_QUERIES)
 
 if __name__ == "__main__":
     main()
-
