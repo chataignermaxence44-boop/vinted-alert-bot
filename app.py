@@ -2,6 +2,7 @@ import requests
 import time
 import os
 import json
+import re
 from collections import deque
 from statistics import mean
 
@@ -17,7 +18,7 @@ COMMAND_CHECK_INTERVAL = 5
 ALERT_SCORE_THRESHOLD = 60
 STATS_FILE = "stats.json"
 
-VINTED_COMMISSION_RATE = 0.05  # 5%
+VINTED_COMMISSION_RATE = 0.05
 
 SEARCH_QUERIES = [
     "nike homme",
@@ -80,7 +81,7 @@ def send_stats():
 📊 <b>STATISTIQUES BOT</b>
 
 🔥 Deals totaux: {stats['total_deals']}
-💰 Profit net total estimé: {round(stats['total_profit_net'],2)}€
+💰 Profit net total: {round(stats['total_profit_net'],2)}€
 💸 Capital investi: {round(stats['total_invested'],2)}€
 📈 ROI net moyen: {round(roi,2)}%
 🏆 Meilleur score: {stats['best_score']}
@@ -89,7 +90,6 @@ def send_stats():
 
 def check_telegram_commands():
     global last_update_id
-
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     response = requests.get(url).json()
 
@@ -109,7 +109,7 @@ def check_telegram_commands():
                 send_stats()
 
 # ==============================
-# ANALYSE
+# ANALYSE PRIX
 # ==============================
 
 def clean_average(prices):
@@ -125,14 +125,52 @@ def calculate_discount(price, avg_price):
         return 0
     return round(((avg_price - price) / avg_price) * 100, 2)
 
-def calculate_score(discount):
-    if discount >= 50:
-        return 90
-    elif discount >= 40:
-        return 75
-    elif discount >= 30:
-        return 60
-    return 0
+# ==============================
+# MODULE POKÉMON ULTRA
+# ==============================
+
+def analyze_pokemon_lot(title, price):
+
+    title_lower = title.lower()
+
+    # Détection nombre de cartes
+    numbers = re.findall(r'\d+', title_lower)
+    estimated_value = 0
+    boost_score = 0
+
+    if numbers:
+        card_count = max([int(n) for n in numbers if int(n) <= 1000], default=0)
+
+        if card_count >= 50:
+            estimated_value = card_count * 0.5  # estimation prudente 0.5€ par carte
+            boost_score += 30
+
+    premium_keywords = [
+        "psa", "gradée", "gold", "ultra",
+        "secrète", "full art", "gx", "ex",
+        "vmax", "vstar", "holo"
+    ]
+
+    if any(word in title_lower for word in premium_keywords):
+        boost_score += 25
+        estimated_value *= 1.5
+
+    if estimated_value > 0:
+        commission = estimated_value * VINTED_COMMISSION_RATE
+        net_resale = estimated_value - commission
+        net_profit = net_resale - price
+
+        if net_profit > 0:
+            roi = (net_profit / price) * 100
+            return {
+                "activated": True,
+                "estimated_value": round(estimated_value,2),
+                "net_profit": round(net_profit,2),
+                "roi": round(roi,2),
+                "boost_score": boost_score
+            }
+
+    return {"activated": False}
 
 # ==============================
 # SIMULATION FETCH
@@ -152,8 +190,8 @@ def fetch_items(query):
 
     return [{
         "id": f"{query}_1",
-        "title": f"{query} Nike 42",
-        "price": 40,
+        "title": f"Lot 200 cartes Pokemon GX ultra rare",
+        "price": 60,
         "avg_price": avg_price,
         "link": "https://www.vinted.fr/item/123456789"
     }]
@@ -165,7 +203,7 @@ def fetch_items(query):
 def main():
     global current_index, last_scan_time
 
-    send_message("🚀 Bot Profit Net Vinted activé")
+    send_message("🚀 Bot ULTRA + Module Pokémon activé")
 
     while True:
 
@@ -185,45 +223,34 @@ def main():
                 items = fetch_items(query)
 
                 for item in items:
+
                     if item["id"] in seen_items:
                         continue
 
                     seen_items.append(item["id"])
 
-                    discount = calculate_discount(item["price"], item["avg_price"])
-                    score = calculate_score(discount)
+                    # MODULE POKÉMON INDÉPENDANT
+                    pokemon_analysis = analyze_pokemon_lot(item["title"], item["price"])
 
-                    if score >= ALERT_SCORE_THRESHOLD:
-
-                        resale_price = item["avg_price"]
-                        commission = resale_price * VINTED_COMMISSION_RATE
-                        net_resale = resale_price - commission
-                        net_profit = net_resale - item["price"]
-
-                        if net_profit <= 0:
-                            continue
-
-                        roi_net = (net_profit / item["price"]) * 100
+                    if pokemon_analysis["activated"]:
 
                         stats["total_deals"] += 1
-                        stats["total_profit_net"] += net_profit
+                        stats["total_profit_net"] += pokemon_analysis["net_profit"]
                         stats["total_invested"] += item["price"]
-
-                        if score > stats["best_score"]:
-                            stats["best_score"] = score
 
                         save_stats(stats)
 
                         message = f"""
-🔥 <b>DEAL SCORE {score}/100</b>
+🃏 <b>MODULE POKÉMON ULTRA ACTIVÉ</b>
 
 📦 {item['title']}
 💰 Achat: {item['price']}€
-📈 Revente estimée: {round(resale_price,2)}€
-🏦 Commission (5%): {round(commission,2)}€
+📊 Valeur estimée: {pokemon_analysis['estimated_value']}€
 
-💸 Profit net estimé: {round(net_profit,2)}€
-📊 ROI net: {round(roi_net,2)}%
+💸 Profit net estimé: {pokemon_analysis['net_profit']}€
+📈 ROI: {pokemon_analysis['roi']}%
+
+🔥 Score Pokémon Boosté: +{pokemon_analysis['boost_score']}
 
 🔗 {item['link']}
 """
