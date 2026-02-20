@@ -13,8 +13,11 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
 SCAN_INTERVAL = 120
+COMMAND_CHECK_INTERVAL = 5
 ALERT_SCORE_THRESHOLD = 60
 STATS_FILE = "stats.json"
+
+VINTED_COMMISSION_RATE = 0.05  # 5%
 
 SEARCH_QUERIES = [
     "nike homme",
@@ -30,6 +33,7 @@ SEARCH_QUERIES = [
 current_index = 0
 seen_items = deque(maxlen=1000)
 last_update_id = None
+last_scan_time = 0
 
 # ==============================
 # LOAD / SAVE STATS
@@ -42,13 +46,9 @@ def load_stats():
     else:
         return {
             "total_deals": 0,
-            "total_profit": 0,
+            "total_profit_net": 0,
             "total_invested": 0,
-            "best_score": 0,
-            "mode_deals": 0,
-            "mode_profit": 0,
-            "pokemon_deals": 0,
-            "pokemon_profit": 0
+            "best_score": 0
         }
 
 def save_stats(stats):
@@ -67,9 +67,25 @@ def send_message(message):
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False  # IMPORTANT pour afficher image preview
+        "disable_web_page_preview": False
     }
     requests.post(url, data=data)
+
+def send_stats():
+    roi = 0
+    if stats["total_invested"] > 0:
+        roi = (stats["total_profit_net"] / stats["total_invested"]) * 100
+
+    message = f"""
+📊 <b>STATISTIQUES BOT</b>
+
+🔥 Deals totaux: {stats['total_deals']}
+💰 Profit net total estimé: {round(stats['total_profit_net'],2)}€
+💸 Capital investi: {round(stats['total_invested'],2)}€
+📈 ROI net moyen: {round(roi,2)}%
+🏆 Meilleur score: {stats['best_score']}
+"""
+    send_message(message)
 
 def check_telegram_commands():
     global last_update_id
@@ -89,48 +105,16 @@ def check_telegram_commands():
         last_update_id = update_id
 
         if "message" in update and "text" in update["message"]:
-            text = update["message"]["text"]
-
-            if text == "/stats":
+            if update["message"]["text"] == "/stats":
                 send_stats()
 
 # ==============================
-# STATS MESSAGE
-# ==============================
-
-def send_stats():
-    roi = 0
-    if stats["total_invested"] > 0:
-        roi = (stats["total_profit"] / stats["total_invested"]) * 100
-
-    message = f"""
-📊 <b>STATISTIQUES BOT</b>
-
-🔥 Deals totaux: {stats['total_deals']}
-💰 Marge totale estimée: {round(stats['total_profit'],2)}€
-💸 Capital investi théorique: {round(stats['total_invested'],2)}€
-📈 ROI moyen: {round(roi,2)}%
-
-🏆 Meilleur score: {stats['best_score']}
-
-👟 Mode:
-Deals: {stats['mode_deals']}
-Profit: {round(stats['mode_profit'],2)}€
-
-🃏 Pokémon:
-Deals: {stats['pokemon_deals']}
-Profit: {round(stats['pokemon_profit'],2)}€
-"""
-    send_message(message)
-
-# ==============================
-# ANALYSE PRIX
+# ANALYSE
 # ==============================
 
 def clean_average(prices):
     if len(prices) < 5:
         return mean(prices)
-
     prices_sorted = sorted(prices)
     cut = int(len(prices_sorted) * 0.2)
     cleaned = prices_sorted[cut:-cut] if cut > 0 else prices_sorted
@@ -141,45 +125,17 @@ def calculate_discount(price, avg_price):
         return 0
     return round(((avg_price - price) / avg_price) * 100, 2)
 
-# ==============================
-# CATEGORY + SCORE
-# ==============================
-
-def detect_category(title):
-    title = title.lower()
-    if "nike" in title or "adidas" in title:
-        return "mode"
-    if "pokemon" in title or "booster" in title or "etb" in title:
-        return "pokemon"
-    return "autre"
-
-def calculate_score(item, discount):
-    score = 0
-    title = item["title"].lower()
-
+def calculate_score(discount):
     if discount >= 50:
-        score += 50
+        return 90
     elif discount >= 40:
-        score += 40
+        return 75
     elif discount >= 30:
-        score += 30
-
-    if "nike" in title or "adidas" in title:
-        score += 20
-
-    if "booster" in title or "etb" in title:
-        score += 25
-
-    if any(size in title for size in ["41", "42", "43"]):
-        score += 15
-
-    if item["price"] < 50:
-        score += 10
-
-    return score
+        return 60
+    return 0
 
 # ==============================
-# SIMULATION FETCH (À remplacer plus tard)
+# SIMULATION FETCH
 # ==============================
 
 def fetch_items(query):
@@ -194,68 +150,67 @@ def fetch_items(query):
 
     avg_price = clean_average(sample_prices)
 
-    return [
-        {
-            "id": f"{query}_1",
-            "title": f"{query} Nike 42",
-            "price": 40,
-            "avg_price": avg_price,
-            "link": "https://www.vinted.fr/item/123456789"
-        }
-    ]
+    return [{
+        "id": f"{query}_1",
+        "title": f"{query} Nike 42",
+        "price": 40,
+        "avg_price": avg_price,
+        "link": "https://www.vinted.fr/item/123456789"
+    }]
 
 # ==============================
 # MAIN LOOP
 # ==============================
 
 def main():
-    global current_index
+    global current_index, last_scan_time
 
-    send_message("🚀 Bot PRO ULTRA activé (Preview image auto + ROI + /stats)")
+    send_message("🚀 Bot Profit Net Vinted activé")
 
     while True:
 
         check_telegram_commands()
 
-        queries_to_scan = [
-            SEARCH_QUERIES[current_index],
-            SEARCH_QUERIES[(current_index + 1) % len(SEARCH_QUERIES)]
-        ]
+        if time.time() - last_scan_time >= SCAN_INTERVAL:
 
-        current_index = (current_index + 2) % len(SEARCH_QUERIES)
+            queries_to_scan = [
+                SEARCH_QUERIES[current_index],
+                SEARCH_QUERIES[(current_index + 1) % len(SEARCH_QUERIES)]
+            ]
 
-        for query in queries_to_scan:
-            items = fetch_items(query)
+            current_index = (current_index + 2) % len(SEARCH_QUERIES)
+            last_scan_time = time.time()
 
-            for item in items:
-                if item["id"] in seen_items:
-                    continue
+            for query in queries_to_scan:
+                items = fetch_items(query)
 
-                seen_items.append(item["id"])
+                for item in items:
+                    if item["id"] in seen_items:
+                        continue
 
-                discount = calculate_discount(item["price"], item["avg_price"])
+                    seen_items.append(item["id"])
 
-                if discount >= 30:
-                    score = calculate_score(item, discount)
+                    discount = calculate_discount(item["price"], item["avg_price"])
+                    score = calculate_score(discount)
 
                     if score >= ALERT_SCORE_THRESHOLD:
 
-                        category = detect_category(item["title"])
-                        potential_profit = round(item["avg_price"] - item["price"], 2)
+                        resale_price = item["avg_price"]
+                        commission = resale_price * VINTED_COMMISSION_RATE
+                        net_resale = resale_price - commission
+                        net_profit = net_resale - item["price"]
+
+                        if net_profit <= 0:
+                            continue
+
+                        roi_net = (net_profit / item["price"]) * 100
 
                         stats["total_deals"] += 1
-                        stats["total_profit"] += potential_profit
+                        stats["total_profit_net"] += net_profit
                         stats["total_invested"] += item["price"]
 
                         if score > stats["best_score"]:
                             stats["best_score"] = score
-
-                        if category == "mode":
-                            stats["mode_deals"] += 1
-                            stats["mode_profit"] += potential_profit
-                        elif category == "pokemon":
-                            stats["pokemon_deals"] += 1
-                            stats["pokemon_profit"] += potential_profit
 
                         save_stats(stats)
 
@@ -263,19 +218,19 @@ def main():
 🔥 <b>DEAL SCORE {score}/100</b>
 
 📦 {item['title']}
-💰 {item['price']}€
-📉 Moyenne: {item['avg_price']}€
-📊 -{discount}%
+💰 Achat: {item['price']}€
+📈 Revente estimée: {round(resale_price,2)}€
+🏦 Commission (5%): {round(commission,2)}€
 
-💸 Marge estimée: {potential_profit}€
+💸 Profit net estimé: {round(net_profit,2)}€
+📊 ROI net: {round(roi_net,2)}%
 
-🔗 Voir l'annonce :
-{item['link']}
+🔗 {item['link']}
 """
 
                         send_message(message)
 
-        time.sleep(SCAN_INTERVAL)
+        time.sleep(COMMAND_CHECK_INTERVAL)
 
 if __name__ == "__main__":
     main()
