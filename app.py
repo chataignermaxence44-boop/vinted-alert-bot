@@ -1,8 +1,8 @@
 import requests
 import time
 import os
-from statistics import mean
 from collections import deque
+from statistics import mean, median
 
 # ==============================
 # CONFIG
@@ -11,7 +11,7 @@ from collections import deque
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-SCAN_INTERVAL = 120  # 2 minutes
+SCAN_INTERVAL = 120
 ALERT_SCORE_THRESHOLD = 60
 
 SEARCH_QUERIES = [
@@ -42,21 +42,37 @@ def send_telegram(message):
     requests.post(url, data=data)
 
 # ==============================
-# ANALYSE
+# ANALYSE PRIX PRO
 # ==============================
+
+def clean_average(prices):
+    if len(prices) < 5:
+        return mean(prices)
+
+    prices_sorted = sorted(prices)
+    cut = int(len(prices_sorted) * 0.2)
+
+    cleaned = prices_sorted[cut:-cut] if cut > 0 else prices_sorted
+    return round(mean(cleaned), 2)
 
 def calculate_discount(price, avg_price):
     if avg_price == 0:
         return 0
     return round(((avg_price - price) / avg_price) * 100, 2)
 
+# ==============================
+# SCORING AVANCÉ
+# ==============================
+
 def calculate_score(item, discount):
     score = 0
     title = item["title"].lower()
 
     # Discount
-    if discount >= 40:
-        score += 45
+    if discount >= 50:
+        score += 50
+    elif discount >= 40:
+        score += 40
     elif discount >= 30:
         score += 30
 
@@ -86,17 +102,27 @@ def calculate_score(item, discount):
     return score
 
 # ==============================
-# SIMULATION FETCH (À REMPLACER PLUS TARD)
+# SIMULATION (structure prête pour 25 annonces)
 # ==============================
 
 def fetch_items(query):
-    # Simulation temporaire pour structure
+    # Simulation de 25 prix pour calcul propre
+    sample_prices = [
+        80, 85, 78, 82, 79,
+        90, 88, 76, 84, 81,
+        83, 77, 86, 87, 75,
+        120, 30, 95, 92, 89,
+        91, 93, 94, 96, 97
+    ]
+
+    avg_price = clean_average(sample_prices)
+
     return [
         {
             "id": f"{query}_1",
             "title": f"{query} Nike 42",
             "price": 40,
-            "avg_price": 80,
+            "avg_price": avg_price,
             "link": "https://vinted.fr/item/demo"
         }
     ]
@@ -107,7 +133,7 @@ def fetch_items(query):
 
 def main():
     global current_index
-    send_telegram("🤖 Bot PRO multi-recherches activé")
+    send_telegram("🚀 Bot PRO++ analyse avancée activée")
 
     while True:
         queries_to_scan = [
@@ -139,7 +165,7 @@ def main():
 
 📦 {item['title']}
 💰 {item['price']}€
-📉 Moyenne: {item['avg_price']}€
+📉 Moyenne nettoyée: {item['avg_price']}€
 📊 -{discount}%
 
 🔗 <a href="{item['link']}">Voir l'annonce</a>
