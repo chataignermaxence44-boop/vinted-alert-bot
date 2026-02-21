@@ -1,178 +1,143 @@
 import requests
 import time
-import json
 import os
 
+print("🚀 Lancement du script...")
+
 # ==============================
-# VARIABLES ENV (Render)
+# VARIABLES ENVIRONNEMENT
 # ==============================
 
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+
+if not TELEGRAM_TOKEN or not CHAT_ID or not RAPIDAPI_KEY:
+    print("❌ Variables manquantes")
+    exit()
+
+print("✅ Variables OK")
+
+# ==============================
+# CONFIG RAPIDAPI
+# ==============================
+
 RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
+BASE_URL = "https://vinted3.p.rapidapi.com/getSearch"
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+SEARCHES = [
+    "nike homme",
+    "adidas homme",
+    "booster pokemon scellé",
+    "etb pokemon",
+    "lot carte pokemon",
+    "lots de carte pokemon"
+]
 
-SEARCH_QUERY = "nike sweat"
-CHECK_INTERVAL = 60
-
-SEEN_FILE = "seen_ids.json"
-
-# ==============================
-# UTIL
-# ==============================
-
-def load_seen():
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r") as f:
-            return set(json.load(f))
-    return set()
-
-def save_seen(seen):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f)
-
-def calculate_score(price):
-    try:
-        price = float(price)
-    except:
-        price = 0
-
-    if price <= 5:
-        return 95
-    elif price <= 10:
-        return 90
-    elif price <= 20:
-        return 80
-    elif price <= 40:
-        return 70
-    return 50
+seen_ids = set()
 
 # ==============================
 # TELEGRAM
 # ==============================
 
-def send_telegram_with_buttons(image_url, caption, url):
-
-    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+def send_telegram_photo(title, price, url, image_url):
 
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "🟢 Voir l'annonce", "url": url}
-            ],
-            [
-                {"text": "🔴 Supprimer", "callback_data": "delete"}
+                {
+                    "text": "🟢 Voir l'annonce",
+                    "url": url
+                },
+                {
+                    "text": "🔴 Supprimer",
+                    "callback_data": "delete"
+                }
             ]
         ]
     }
 
-    payload = {
+    caption = f"""
+🔥 {title}
+💰 {price}€
+"""
+
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+
+    data = {
         "chat_id": CHAT_ID,
         "photo": image_url,
         "caption": caption,
-        "parse_mode": "HTML",
-        "reply_markup": json.dumps(keyboard)
+        "reply_markup": str(keyboard).replace("'", '"')
     }
 
-    r = requests.post(telegram_url, data=payload)
-    print("Telegram send status:", r.status_code, flush=True)
+    r = requests.post(telegram_url, data=data)
+    print("Telegram status:", r.status_code)
 
 # ==============================
-# RAPIDAPI FETCH
+# RAPIDAPI SEARCH
 # ==============================
 
-def fetch_vinted():
+def search_vinted(keyword):
 
-    url = "https://vinted3.p.rapidapi.com/getSearch"
+    headers = {
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": RAPIDAPI_HOST
+    }
 
-    querystring = {
+    params = {
         "country": "fr",
         "page": "1",
-        "keyword": SEARCH_QUERY,
+        "keyword": keyword,
         "order": "newest_first"
     }
 
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST
-    }
+    response = requests.get(BASE_URL, headers=headers, params=params)
 
-    response = requests.get(url, headers=headers, params=querystring)
+    print("STATUS CODE:", response.status_code)
 
-    print("STATUS CODE:", response.status_code, flush=True)
+    if response.status_code != 200:
+        print("Erreur API:", response.text)
+        return []
 
-    try:
-        data = response.json()
-        print("JSON reçu:", data, flush=True)
-        return data
-    except:
-        print("Erreur parsing JSON", flush=True)
-        return None
+    data = response.json()
+
+    # ⚠️ Structure à adapter selon réponse réelle
+    if "items" not in data:
+        print("Structure JSON inconnue:", data)
+        return []
+
+    return data["items"]
 
 # ==============================
-# MAIN
+# BOUCLE PRINCIPALE
 # ==============================
 
-def main():
+while True:
 
-    print("🚀 Lancement du script...", flush=True)
+    print("🔎 Scan en cours...")
 
-    seen_ids = load_seen()
+    for keyword in SEARCHES:
 
-    # TEST TELEGRAM
-    send_telegram_with_buttons(
-        "https://via.placeholder.com/300",
-        "✅ BOT CONNECTÉ RAPIDAPI",
-        "https://google.com"
-    )
+        print("Recherche:", keyword)
 
-    while True:
-        try:
+        items = search_vinted(keyword)
 
-            data = fetch_vinted()
+        for item in items[:5]:  # top 5 annonces
 
-            if not data or "data" not in data:
-                print("Aucune donnée reçue ou structure inattendue", flush=True)
-                time.sleep(CHECK_INTERVAL)
+            item_id = item.get("id")
+
+            if item_id in seen_ids:
                 continue
 
-            items = data["data"]
+            seen_ids.add(item_id)
 
-            for item in items[:10]:
+            title = item.get("title")
+            price = item.get("price", {}).get("amount", 0)
+            url = item.get("url")
+            image = item.get("photos", [{}])[0].get("url")
 
-                product_id = item.get("id")
+            if title and image and url:
+                send_telegram_photo(title, price, url, image)
 
-                if not product_id:
-                    continue
-
-                if product_id in seen_ids:
-                    continue
-
-                seen_ids.add(product_id)
-                save_seen(seen_ids)
-
-                title = item.get("title", "Annonce")
-                price = item.get("price", {}).get("amount", 0)
-                url = item.get("url", "")
-                image = item.get("photo", "")
-
-                score = calculate_score(price)
-
-                message = f"""
-🔥 <b>DEAL SCORE {score}/100</b>
-
-📦 <b>{title}</b>
-💰 {price} €
-"""
-
-                send_telegram_with_buttons(image, message, url)
-
-            time.sleep(CHECK_INTERVAL)
-
-        except Exception as e:
-            print("ERREUR:", e, flush=True)
-            time.sleep(30)
-
-if __name__ == "__main__":
-    main()
+    time.sleep(60)
