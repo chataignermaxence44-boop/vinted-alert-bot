@@ -4,14 +4,14 @@ import json
 import os
 
 # ==============================
-# CONFIG
+# VARIABLES ENV (Render)
 # ==============================
 
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
 
-TELEGRAM_TOKEN = "TON_TOKEN_TELEGRAM"
-CHAT_ID = "TON_CHAT_ID"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
 SEARCH_QUERY = "nike homme"
 CHECK_INTERVAL = 60
@@ -44,7 +44,12 @@ def calculate_score(price):
         return 70
     return 50
 
+# ==============================
+# TELEGRAM
+# ==============================
+
 def send_telegram_with_buttons(image_url, caption, url):
+
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
 
     keyboard = {
@@ -86,7 +91,7 @@ def check_callbacks():
             delete_message(message_id)
 
 # ==============================
-# API VINTED
+# RAPIDAPI FETCH
 # ==============================
 
 def fetch_vinted():
@@ -104,6 +109,7 @@ def fetch_vinted():
     }
 
     response = requests.get(url, headers=headers, params=querystring)
+
     return response.json()
 
 # ==============================
@@ -111,18 +117,36 @@ def fetch_vinted():
 # ==============================
 
 def main():
+
     seen_ids = load_seen()
 
-    print("🚀 Bot avec boutons actif...")
+    print("🚀 Bot démarré")
+
+    # 🔥 TEST TELEGRAM AU DÉMARRAGE
+    send_telegram_with_buttons(
+        "https://via.placeholder.com/300",
+        "✅ TEST TELEGRAM OK",
+        "https://google.com"
+    )
 
     while True:
         try:
+
             check_callbacks()
 
             data = fetch_vinted()
 
+            # Sécurité si API vide
+            if not data:
+                time.sleep(CHECK_INTERVAL)
+                continue
+
             for item in data[:10]:
-                product_id = item["productId"]
+
+                product_id = item.get("productId")
+
+                if not product_id:
+                    continue
 
                 if product_id in seen_ids:
                     continue
@@ -130,10 +154,10 @@ def main():
                 seen_ids.add(product_id)
                 save_seen(seen_ids)
 
-                title = item["title"]
-                price = item["price"]["amount"]["amount"]
-                url = item["url"]
-                image = item["image"]
+                title = item.get("title", "Annonce")
+                price = item.get("price", {}).get("amount", {}).get("amount", 0)
+                url = item.get("url", "")
+                image = item.get("image", "")
 
                 score = calculate_score(price)
 
@@ -142,7 +166,6 @@ def main():
 
 📦 <b>{title}</b>
 💰 {price} €
-
 """
 
                 send_telegram_with_buttons(image, message, url)
@@ -155,4 +178,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
