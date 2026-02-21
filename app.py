@@ -13,7 +13,7 @@ RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-SEARCH_QUERY = "nike homme"
+SEARCH_QUERY = "nike sweat"
 CHECK_INTERVAL = 60
 
 SEEN_FILE = "seen_ids.json"
@@ -78,35 +78,19 @@ def send_telegram_with_buttons(image_url, caption, url):
     r = requests.post(telegram_url, data=payload)
     print("Telegram send status:", r.status_code, flush=True)
 
-def delete_message(message_id):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "message_id": message_id
-    }
-    requests.post(url, data=payload)
-
-def check_callbacks():
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    response = requests.get(url).json()
-
-    for update in response.get("result", []):
-        if "callback_query" in update:
-            message_id = update["callback_query"]["message"]["message_id"]
-            delete_message(message_id)
-
 # ==============================
 # RAPIDAPI FETCH
 # ==============================
 
 def fetch_vinted():
 
-    url = "https://vinted3.p.rapidapi.com/search"
+    url = "https://vinted3.p.rapidapi.com/getSearch"
 
     querystring = {
-        "query": SEARCH_QUERY,
         "country": "fr",
-        "page": "1"
+        "page": "1",
+        "keyword": SEARCH_QUERY,
+        "order": "newest_first"
     }
 
     headers = {
@@ -136,40 +120,28 @@ def main():
 
     seen_ids = load_seen()
 
-    print("🚀 Bot DEBUG démarré", flush=True)
-
     # TEST TELEGRAM
     send_telegram_with_buttons(
         "https://via.placeholder.com/300",
-        "✅ TEST TELEGRAM OK",
+        "✅ BOT CONNECTÉ RAPIDAPI",
         "https://google.com"
     )
 
     while True:
         try:
 
-            check_callbacks()
-
             data = fetch_vinted()
 
-            if not data:
-                print("Aucune donnée reçue.", flush=True)
+            if not data or "data" not in data:
+                print("Aucune donnée reçue ou structure inattendue", flush=True)
                 time.sleep(CHECK_INTERVAL)
                 continue
 
-            # Adapter selon structure JSON
-            if isinstance(data, list):
-                items = data
-            elif isinstance(data, dict) and "items" in data:
-                items = data["items"]
-            else:
-                print("Structure JSON inconnue", flush=True)
-                time.sleep(CHECK_INTERVAL)
-                continue
+            items = data["data"]
 
             for item in items[:10]:
 
-                product_id = item.get("productId")
+                product_id = item.get("id")
 
                 if not product_id:
                     continue
@@ -181,9 +153,9 @@ def main():
                 save_seen(seen_ids)
 
                 title = item.get("title", "Annonce")
-                price = item.get("price", {}).get("amount", {}).get("amount", 0)
+                price = item.get("price", {}).get("amount", 0)
                 url = item.get("url", "")
-                image = item.get("image", "")
+                image = item.get("photo", "")
 
                 score = calculate_score(price)
 
