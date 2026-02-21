@@ -7,7 +7,7 @@ import os
 # CONFIG
 # ==============================
 
-RAPIDAPI_KEY = "TA_CLE_RAPIDAPI"
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
 
 TELEGRAM_TOKEN = "TON_TOKEN_TELEGRAM"
@@ -155,3 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
