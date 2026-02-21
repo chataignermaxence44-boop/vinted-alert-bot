@@ -33,7 +33,11 @@ def save_seen(seen):
         json.dump(list(seen), f)
 
 def calculate_score(price):
-    price = float(price)
+    try:
+        price = float(price)
+    except:
+        price = 0
+
     if price <= 5:
         return 95
     elif price <= 10:
@@ -110,7 +114,13 @@ def fetch_vinted():
 
     response = requests.get(url, headers=headers, params=querystring)
 
-    return response.json()
+    print("STATUS CODE:", response.status_code)
+    print("RAW RESPONSE:", response.text)
+
+    try:
+        return response.json()
+    except:
+        return None
 
 # ==============================
 # MAIN
@@ -120,9 +130,9 @@ def main():
 
     seen_ids = load_seen()
 
-    print("🚀 Bot démarré")
+    print("🚀 Bot DEBUG démarré")
 
-    # 🔥 TEST TELEGRAM AU DÉMARRAGE
+    # TEST TELEGRAM
     send_telegram_with_buttons(
         "https://via.placeholder.com/300",
         "✅ TEST TELEGRAM OK",
@@ -136,44 +146,20 @@ def main():
 
             data = fetch_vinted()
 
-            # Sécurité si API vide
+            print("DATA PARSED:", data)
+
             if not data:
+                print("Aucune donnée reçue.")
                 time.sleep(CHECK_INTERVAL)
                 continue
 
-            for item in data[:10]:
-
-                product_id = item.get("productId")
-
-                if not product_id:
-                    continue
-
-                if product_id in seen_ids:
-                    continue
-
-                seen_ids.add(product_id)
-                save_seen(seen_ids)
-
-                title = item.get("title", "Annonce")
-                price = item.get("price", {}).get("amount", {}).get("amount", 0)
-                url = item.get("url", "")
-                image = item.get("image", "")
-
-                score = calculate_score(price)
-
-                message = f"""
-🔥 <b>DEAL SCORE {score}/100</b>
-
-📦 <b>{title}</b>
-💰 {price} €
-"""
-
-                send_telegram_with_buttons(image, message, url)
+            # ⚠️ TEMPORAIRE: on n’envoie rien pour l’instant
+            # On regarde juste la structure
 
             time.sleep(CHECK_INTERVAL)
 
         except Exception as e:
-            print("Erreur:", e)
+            print("ERREUR:", e)
             time.sleep(30)
 
 if __name__ == "__main__":
