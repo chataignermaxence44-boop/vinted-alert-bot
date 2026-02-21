@@ -1,198 +1,157 @@
 import requests
 import time
-import os
 import json
-import re
-from collections import deque
-from statistics import mean
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-
-SCAN_INTERVAL = 120
-COMMAND_CHECK_INTERVAL = 5
-STATS_FILE = "stats.json"
-
-VINTED_COMMISSION_RATE = 0.05
-
-PRIORITY_ROI_THRESHOLD = 80
-PRIORITY_PROFIT_THRESHOLD = 50
-
-SEARCH_QUERIES = []  # Tu gardes tes 40 recherches côté Vinted
-
-current_index = 0
-seen_items = deque(maxlen=1000)
-last_update_id = None
-last_scan_time = 0
+import os
 
 # ==============================
-# LOAD / SAVE STATS
+# CONFIG
 # ==============================
 
-def load_stats():
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, "r") as f:
-            return json.load(f)
-    else:
-        return {
-            "total_deals": 0,
-            "total_profit_net": 0,
-            "total_invested": 0,
-            "best_roi": 0
-        }
+RAPIDAPI_KEY = "TA_CLE_RAPIDAPI"
+RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
 
-def save_stats(stats):
-    with open(STATS_FILE, "w") as f:
-        json.dump(stats, f)
+TELEGRAM_TOKEN = "TON_TOKEN_TELEGRAM"
+CHAT_ID = "TON_CHAT_ID"
 
-stats = load_stats()
+SEARCH_QUERY = "nike homme"
+CHECK_INTERVAL = 60
+
+SEEN_FILE = "seen_ids.json"
 
 # ==============================
-# TELEGRAM
+# UTIL
 # ==============================
 
-def send_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
+def load_seen():
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+def save_seen(seen):
+    with open(SEEN_FILE, "w") as f:
+        json.dump(list(seen), f)
+
+def calculate_score(price):
+    price = float(price)
+    if price <= 5:
+        return 95
+    elif price <= 10:
+        return 90
+    elif price <= 20:
+        return 80
+    elif price <= 40:
+        return 70
+    return 50
+
+def send_telegram_with_buttons(image_url, caption, url):
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "🟢 Voir l'annonce", "url": url}
+            ],
+            [
+                {"text": "🔴 Supprimer", "callback_data": "delete"}
+            ]
+        ]
     }
-    requests.post(url, data=data)
 
-def send_stats():
-    roi = 0
-    if stats["total_invested"] > 0:
-        roi = (stats["total_profit_net"] / stats["total_invested"]) * 100
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": image_url,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps(keyboard)
+    }
 
-    message = f"""
-📊 <b>STATISTIQUES BOT</b>
+    requests.post(telegram_url, data=payload)
 
-🔥 Deals: {stats['total_deals']}
-💰 Profit net total: {round(stats['total_profit_net'],2)}€
-💸 Capital investi: {round(stats['total_invested'],2)}€
-📈 ROI moyen: {round(roi,2)}%
-🏆 Meilleur ROI: {round(stats['best_roi'],2)}%
-"""
-    send_message(message)
+def delete_message(message_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "message_id": message_id
+    }
+    requests.post(url, data=payload)
 
-def check_telegram_commands():
-    global last_update_id
+def check_callbacks():
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     response = requests.get(url).json()
 
-    if not response["ok"]:
-        return
-
-    for update in response["result"]:
-        update_id = update["update_id"]
-
-        if last_update_id and update_id <= last_update_id:
-            continue
-
-        last_update_id = update_id
-
-        if "message" in update and "text" in update["message"]:
-            if update["message"]["text"] == "/stats":
-                send_stats()
+    for update in response.get("result", []):
+        if "callback_query" in update:
+            message_id = update["callback_query"]["message"]["message_id"]
+            delete_message(message_id)
 
 # ==============================
-# ANALYSE MODE
+# API VINTED
 # ==============================
 
-def analyze_item(title, price, estimated_value):
+def fetch_vinted():
+    url = "https://vinted3.p.rapidapi.com/search"
 
-    commission = estimated_value * VINTED_COMMISSION_RATE
-    net_resale = estimated_value - commission
-    net_profit = net_resale - price
-
-    if net_profit <= 0:
-        return None
-
-    roi = (net_profit / price) * 100
-
-    return {
-        "net_profit": round(net_profit,2),
-        "roi": round(roi,2)
+    querystring = {
+        "query": SEARCH_QUERY,
+        "country": "fr",
+        "page": "1"
     }
 
-# ==============================
-# SIMULATION (À remplacer si besoin)
-# ==============================
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST
+    }
 
-def simulate_item():
-
-    title = "Lot 200 cartes Pokemon GX ultra rare"
-    price = 60
-    estimated_value = 160
-
-    return title, price, estimated_value, "https://www.vinted.fr/item/123456789"
+    response = requests.get(url, headers=headers, params=querystring)
+    return response.json()
 
 # ==============================
-# MAIN LOOP
+# MAIN
 # ==============================
 
 def main():
+    seen_ids = load_seen()
 
-    send_message("🚀 Bot FUSION MAX + PRIORITÉ activé")
+    print("🚀 Bot avec boutons actif...")
 
     while True:
+        try:
+            check_callbacks()
 
-        check_telegram_commands()
+            data = fetch_vinted()
 
-        title, price, estimated_value, link = simulate_item()
+            for item in data[:10]:
+                product_id = item["productId"]
 
-        result = analyze_item(title, price, estimated_value)
+                if product_id in seen_ids:
+                    continue
 
-        if result:
+                seen_ids.add(product_id)
+                save_seen(seen_ids)
 
-            net_profit = result["net_profit"]
-            roi = result["roi"]
+                title = item["title"]
+                price = item["price"]["amount"]["amount"]
+                url = item["url"]
+                image = item["image"]
 
-            stats["total_deals"] += 1
-            stats["total_profit_net"] += net_profit
-            stats["total_invested"] += price
-
-            if roi > stats["best_roi"]:
-                stats["best_roi"] = roi
-
-            save_stats(stats)
-
-            # PRIORITÉ CHECK
-            if roi >= PRIORITY_ROI_THRESHOLD or net_profit >= PRIORITY_PROFIT_THRESHOLD:
+                score = calculate_score(price)
 
                 message = f"""
-🚨 <b>DEAL PRIORITÉ - SNIPER IMMÉDIAT</b>
+🔥 <b>DEAL SCORE {score}/100</b>
 
-📦 {title}
-💰 Achat: {price}€
-📊 Valeur estimée: {estimated_value}€
+📦 <b>{title}</b>
+💰 {price} €
 
-💸 Profit net: {net_profit}€
-📈 ROI: {roi}%
-
-⚡ ACTION RAPIDE RECOMMANDÉE
-
-🔗 {link}
 """
 
-            else:
+                send_telegram_with_buttons(image, message, url)
 
-                message = f"""
-🔥 DEAL RENTABLE
+            time.sleep(CHECK_INTERVAL)
 
-📦 {title}
-💰 Achat: {price}€
-💸 Profit net: {net_profit}€
-📈 ROI: {roi}%
-
-🔗 {link}
-"""
-
-            send_message(message)
-
-        time.sleep(120)
+        except Exception as e:
+            print("Erreur:", e)
+            time.sleep(30)
 
 if __name__ == "__main__":
     main()
