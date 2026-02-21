@@ -75,7 +75,8 @@ def send_telegram_with_buttons(image_url, caption, url):
         "reply_markup": json.dumps(keyboard)
     }
 
-    requests.post(telegram_url, data=payload)
+    r = requests.post(telegram_url, data=payload)
+    print("Telegram send status:", r.status_code, flush=True)
 
 def delete_message(message_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
@@ -99,6 +100,7 @@ def check_callbacks():
 # ==============================
 
 def fetch_vinted():
+
     url = "https://vinted3.p.rapidapi.com/search"
 
     querystring = {
@@ -114,12 +116,14 @@ def fetch_vinted():
 
     response = requests.get(url, headers=headers, params=querystring)
 
-    print("STATUS CODE:", response.status_code)
-    print("RAW RESPONSE:", response.text)
+    print("STATUS CODE:", response.status_code, flush=True)
 
     try:
-        return response.json()
+        data = response.json()
+        print("JSON reçu:", data, flush=True)
+        return data
     except:
+        print("Erreur parsing JSON", flush=True)
         return None
 
 # ==============================
@@ -128,9 +132,11 @@ def fetch_vinted():
 
 def main():
 
+    print("🚀 Lancement du script...", flush=True)
+
     seen_ids = load_seen()
 
-    print("🚀 Bot DEBUG démarré")
+    print("🚀 Bot DEBUG démarré", flush=True)
 
     # TEST TELEGRAM
     send_telegram_with_buttons(
@@ -146,20 +152,54 @@ def main():
 
             data = fetch_vinted()
 
-            print("DATA PARSED:", data)
-
             if not data:
-                print("Aucune donnée reçue.")
+                print("Aucune donnée reçue.", flush=True)
                 time.sleep(CHECK_INTERVAL)
                 continue
 
-            # ⚠️ TEMPORAIRE: on n’envoie rien pour l’instant
-            # On regarde juste la structure
+            # Adapter selon structure JSON
+            if isinstance(data, list):
+                items = data
+            elif isinstance(data, dict) and "items" in data:
+                items = data["items"]
+            else:
+                print("Structure JSON inconnue", flush=True)
+                time.sleep(CHECK_INTERVAL)
+                continue
+
+            for item in items[:10]:
+
+                product_id = item.get("productId")
+
+                if not product_id:
+                    continue
+
+                if product_id in seen_ids:
+                    continue
+
+                seen_ids.add(product_id)
+                save_seen(seen_ids)
+
+                title = item.get("title", "Annonce")
+                price = item.get("price", {}).get("amount", {}).get("amount", 0)
+                url = item.get("url", "")
+                image = item.get("image", "")
+
+                score = calculate_score(price)
+
+                message = f"""
+🔥 <b>DEAL SCORE {score}/100</b>
+
+📦 <b>{title}</b>
+💰 {price} €
+"""
+
+                send_telegram_with_buttons(image, message, url)
 
             time.sleep(CHECK_INTERVAL)
 
         except Exception as e:
-            print("ERREUR:", e)
+            print("ERREUR:", e, flush=True)
             time.sleep(30)
 
 if __name__ == "__main__":
