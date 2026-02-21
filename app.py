@@ -1,26 +1,13 @@
 import requests
 import time
 import os
+import json
 
-print("🚀 Lancement du script...")
-
-# ==============================
-# VARIABLES ENVIRONNEMENT
-# ==============================
+print("🚀 BOT RAPIDAPI LANCÉ")
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-
-if not TELEGRAM_TOKEN or not CHAT_ID or not RAPIDAPI_KEY:
-    print("❌ Variables manquantes")
-    exit()
-
-print("✅ Variables OK")
-
-# ==============================
-# CONFIG RAPIDAPI
-# ==============================
 
 RAPIDAPI_HOST = "vinted3.p.rapidapi.com"
 BASE_URL = "https://vinted3.p.rapidapi.com/getSearch"
@@ -34,13 +21,14 @@ SEARCHES = [
     "lots de carte pokemon"
 ]
 
+CHECK_INTERVAL = 60
 seen_ids = set()
 
-# ==============================
-# TELEGRAM
-# ==============================
+# ================= TELEGRAM =================
 
 def send_telegram_photo(title, price, url, image_url):
+
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
 
     keyboard = {
         "inline_keyboard": [
@@ -48,10 +36,6 @@ def send_telegram_photo(title, price, url, image_url):
                 {
                     "text": "🟢 Voir l'annonce",
                     "url": url
-                },
-                {
-                    "text": "🔴 Supprimer",
-                    "callback_data": "delete"
                 }
             ]
         ]
@@ -62,21 +46,17 @@ def send_telegram_photo(title, price, url, image_url):
 💰 {price}€
 """
 
-    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-
-    data = {
+    payload = {
         "chat_id": CHAT_ID,
         "photo": image_url,
         "caption": caption,
-        "reply_markup": str(keyboard).replace("'", '"')
+        "reply_markup": json.dumps(keyboard)
     }
 
-    r = requests.post(telegram_url, data=data)
-    print("Telegram status:", r.status_code)
+    r = requests.post(telegram_url, data=payload)
+    print("Telegram:", r.status_code, flush=True)
 
-# ==============================
-# RAPIDAPI SEARCH
-# ==============================
+# ================= RAPIDAPI =================
 
 def search_vinted(keyword):
 
@@ -94,50 +74,49 @@ def search_vinted(keyword):
 
     response = requests.get(BASE_URL, headers=headers, params=params)
 
-    print("STATUS CODE:", response.status_code)
+    print("STATUS:", response.status_code, flush=True)
 
     if response.status_code != 200:
-        print("Erreur API:", response.text)
+        print("Erreur API:", response.text, flush=True)
         return []
 
     data = response.json()
 
-    # ⚠️ Structure à adapter selon réponse réelle
-    if "items" not in data:
-        print("Structure JSON inconnue:", data)
+    if "products" not in data:
+        print("Structure inconnue:", data, flush=True)
         return []
 
-    return data["items"]
+    return data["products"]
 
-# ==============================
-# BOUCLE PRINCIPALE
-# ==============================
+# ================= MAIN =================
 
 while True:
 
-    print("🔎 Scan en cours...")
+    print("🔎 Scan...", flush=True)
 
     for keyword in SEARCHES:
 
-        print("Recherche:", keyword)
+        print("Recherche:", keyword, flush=True)
 
-        items = search_vinted(keyword)
+        products = search_vinted(keyword)
 
-        for item in items[:5]:  # top 5 annonces
+        for product in products[:10]:
 
-            item_id = item.get("id")
+            product_id = product.get("id")
 
-            if item_id in seen_ids:
+            if product_id in seen_ids:
                 continue
 
-            seen_ids.add(item_id)
+            seen_ids.add(product_id)
 
-            title = item.get("title")
-            price = item.get("price", {}).get("amount", 0)
-            url = item.get("url")
-            image = item.get("photos", [{}])[0].get("url")
+            title = product.get("title", "Annonce")
+            price = product.get("price", {}).get("amount", 0)
+            url = product.get("url", "")
 
-            if title and image and url:
-                send_telegram_photo(title, price, url, image)
+            images = product.get("images", [])
+            image_url = images[0]["url"] if images else "https://via.placeholder.com/300"
 
-    time.sleep(60)
+            if url and image_url:
+                send_telegram_photo(title, price, url, image_url)
+
+    time.sleep(CHECK_INTERVAL)
